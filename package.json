@@ -1,0 +1,14 @@
+{
+	"name": "upbit-orderbook-replication",
+	"version": "1.0.0",
+	"description": "Upbit order book replication bot",
+	"main": "start.js",
+	"repository": "https://github.com/byteball/upbit-orderbook-replication.git",
+	"author": "tony",
+	"license": "MIT",
+	"dependencies": {
+		"ccxws": "^0.37.4",
+		"ccxt": "^1.25.80",
+		"dotenv": "^8.2.0"
+	}
+}
