@@ -50,29 +50,35 @@ async function createLimitTx(pair, side, size, price, hash) {
 }
 
 async function doCreateLimitTx(pair, side, size, price, hash, attempt) {
-	attempt = attempt || 0;
-	if (assocOrderIdsByHashes[hash] === null) {
-		try {
-			console.log('will attempt to create order ' + hash);
-			let order = (side === 'BUY')
-				? await upbit.createLimitBuyOrder(pair, size, price)
-				: await upbit.createLimitSellOrder(pair, size, price);
-			console.log('---- limit_resp', hash, order);
-			assocOrderIdsByHashes[hash] = order.id;
-			assocOrders[order.id] = { side, size, price };
-		}
-		catch (e) {
-			console.log('---- creating dest order ' + hash + ' failed', e instanceof ccxt.InsufficientFunds, "cancels under way:", Object.keys(assocCancelsUnderWay).length, e);
-			if (attempt > 10)
-				throw Error("too many retries while creating order " + hash);
-			// retry
-			attempt++;
-			return setTimeout(() => doCreateLimitTx(pair, side, size, price, hash, attempt), 100);
-		//	assocOrderIdsByHashes[hash] = 0;
-		//	throw e;
-		}
-	}
-	events.emit(hash, assocOrderIdsByHashes[hash]);
+	mutex.lock("order", async function(unlock){
+
+		attempt = attempt || 0;
+		if (assocOrderIdsByHashes[hash] === null) {
+			try {
+				console.log('will attempt to create order ' + hash);
+				let order = (side === 'BUY')
+					? await upbit.createLimitBuyOrder(pair, size, price)
+					: await upbit.createLimitSellOrder(pair, size, price);
+				console.log('---- limit_resp', hash, order);
+				assocOrderIdsByHashes[hash] = order.id;
+				assocOrders[order.id] = { side, size, price };
+			}
+			catch (e) {
+				console.log('---- creating dest order ' + hash + ' failed', e instanceof ccxt.InsufficientFunds, "cancels under way:", Object.keys(assocCancelsUnderWay).length, e);
+				if (attempt > 10)
+					throw Error("too many retries while creating order " + hash);
+				// retry
+				attempt++;
+				setTimeout(unlock, 2); // ccxt uses the time in millisecond as nonce, we delay unlocking to avoid nonce reusing
+				return setTimeout(() => doCreateLimitTx(pair, side, size, price, hash, attempt), 100);
+			//	assocOrderIdsByHashes[hash] = 0;
+			//	throw e;
+			}
+			setTimeout(unlock, 2); // ccxt uses the time in millisecond as nonce, we delay unlocking to avoid nonce reusing
+		} else
+			unlock();
+		events.emit(hash, assocOrderIdsByHashes[hash]);
+	});
 }
 
 async function waitUntilMyMatchingOrdersRemoved(side, price, attempt) {
@@ -126,18 +132,24 @@ function createAndSendCancel(hash) {
 
 async function cancelOrder(id, hash) {
 	assocCancelsUnderWay[id] = true;
-	try {
-		let cancel_resp = await upbit.cancelOrder(id, 'GBYTE/BTC');
-		console.log('---- cancel_resp', id, hash, cancel_resp);
-	}
-	catch (e) {
-		let bTransient = (e instanceof ccxt.ExchangeNotAvailable || e instanceof ccxt.RequestTimeout || e instanceof ccxt.NetworkError);
-		console.log('---- cancelling dest order ' + id + ' (' + hash + ') failed', bTransient, e);
-		if (bTransient)
-			return cancelOrder(id, hash);
-	}
-	delete assocOrders[id];
-	delete assocCancelsUnderWay[id];
+	mutex.lock("order", async function(unlock){
+
+		try {
+			let cancel_resp = await upbit.cancelOrder(id, 'GBYTE/BTC');
+			console.log('---- cancel_resp', id, hash, cancel_resp);
+		}
+		catch (e) {
+			let bTransient = (e instanceof ccxt.ExchangeNotAvailable || e instanceof ccxt.RequestTimeout || e instanceof ccxt.NetworkError);
+			console.log('---- cancelling dest order ' + id + ' (' + hash + ') failed', bTransient, e);
+			if (bTransient){
+				setTimeout(unlock, 2);
+				return cancelOrder(id, hash);
+			}
+		}
+		delete assocOrders[id];
+		delete assocCancelsUnderWay[id];
+		setTimeout(unlock, 2);
+	});
 }
 
 async function getBalances() {
@@ -254,8 +266,15 @@ async function getFilledAmountByPrices(prices) {
 	return await getFilledAmount(order_ids);
 }
 
+function delay(ms){
+	return new Promise(function(resolve){
+		setTimeout(resolve, ms);
+	});
+}
+
 async function getFilledAmount(order_ids) {
 	let amount = 0;
+	await delay(100);
 	for (let order_id of order_ids) {
 		let dest_order = await getOrderInfo(order_id);
 		console.log('--- affected order', dest_order);
