@@ -6,7 +6,6 @@ const mutex = require("./mutex");
 const source = require("./source");
 const upbit = require("./upbit");
 
-const ws_api = new ccxws.Upbit();
 
 let assocSourceBids = {};
 let assocSourceAsks = {};
@@ -102,7 +101,7 @@ async function updateDestBids(bids) {
 	let unlock = await mutex.lock('bids');
 	let dest_balances = await upbit.getBalances();
 	let source_balances = await source.getBalances();
-	console.log('dest balances', dest_balances);
+//	console.log('dest balances', dest_balances);
 	let dest_quote_balance_available = (dest_balances.total[conf.quote_currency] || 0) - conf.MIN_QUOTE_BALANCE;
 	let source_base_balance_available = (source_balances.free.GBYTE || 0) - conf.MIN_BASE_BALANCE;
 	let arrNewOrders = [];
@@ -147,7 +146,7 @@ async function updateDestAsks(asks) {
 	let unlock = await mutex.lock('asks');
 	let dest_balances = await upbit.getBalances();
 	let source_balances = await source.getBalances();
-	console.log('dest balances', dest_balances);
+	//console.log('dest balances', dest_balances);
 	let dest_base_balance_available = (dest_balances.total.GBYTE || 0) - conf.MIN_BASE_BALANCE;
 	let source_quote_balance_available = (source_balances.free.BTC || 0) - conf.MIN_QUOTE_BALANCE;
 	let arrNewOrders = [];
@@ -231,7 +230,6 @@ async function onSourceOrderbookSnapshot(snapshot) {
 
 async function onSourceOrderbookUpdate(update) {
 	let unlock = await mutex.lock('update');
-	console.log('update', JSON.stringify(update, null, '\t'));
 	let arrNewBuyOrders = [];
 	let arrNewSellOrders = [];
 	if (update.bids.length > 0) {
@@ -267,9 +265,6 @@ async function onSourceOrderbookUpdate(update) {
 	unlock();
 }
 
-async function onDestDisconnect() {
-	await ws_api.subscribeTrades(conf.dest_ws_market);
-}
 
 
 function startBittrexWs() {
@@ -283,9 +278,6 @@ function startBittrexWs() {
  
 	bittrexWS.on("error", err => console.log('---- error from bittrex socket', err));
 
-	// handle trade events
-	bittrexWS.on("trade", trade => console.log('trade', JSON.stringify(trade, null, '\t')));
-
 	// handle level2 orderbook snapshots
 	bittrexWS.on("l2snapshot", onSourceOrderbookSnapshot);
 	bittrexWS.on("l2update", onSourceOrderbookUpdate);
@@ -293,8 +285,7 @@ function startBittrexWs() {
 	// subscribe to trades
 	bittrexWS.subscribeTrades(market);
 
-	// subscribe to level2 orderbook snapshots
-//	bittrex.subscribeLevel2Snapshots(market);
+	// subscribe to level2 orderbook updates
 	bittrexWS.subscribeLevel2Updates(market);
 }
 
@@ -306,10 +297,13 @@ async function start() {
 	console.log('---- starting upbit-orderbook-replication');
 	await source.start();
 	await upbit.start();
+	const upbit_ws = new ccxws.Upbit();
 
-	ws_api.on("trade", async (trade) => {
+	await upbit_ws.subscribeTrades(conf.dest_ws_market);
+	await upbit_ws.subscribeTicker(conf.dest_ws_market); // we have to subscribe ticker in order to keep the websocket alive
 
-		if (trade.unix < new Date() - 5000) // UPbit sends periodically last trade when no new trade happened for a while, so we ignore outdated ones
+	upbit_ws.on("trade", async (trade) => {
+		if (trade.unix < new Date() - 90000) // we can ignore trade older than the upbit websocket watchdog timeout 
 			return console.log('ignore old trade');
 		let amount = await upbit.getFilledAmountByPrices([trade.price]);
 		if (amount === 0)
@@ -321,10 +315,8 @@ async function start() {
 		await source.createMarketTx(side === 'BUY' ? 'SELL' : 'BUY', size);
 	});
 
-	ws_api.on("error", error => console.log(error));
-	ws_api.on('disconnected', onDestDisconnect);
+	upbit_ws.on("error", error => console.log(error));
 
-	await ws_api.subscribeTrades(conf.dest_ws_market);
 	await cancelAllDestOrders();
 
 	startBittrexWs();

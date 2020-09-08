@@ -4,11 +4,9 @@ const path = require('path');
 require('dotenv').config({ path: path.dirname(process.mainModule.paths[0]) + '/.env' });
 
 
-// websocket URL of Upbit we are are connecting to
-exports.upbit_ws_url = 'wss://id-api.upbit.com/websocket/v1';
-
-exports.upbit_api_url = 'https://id-api.upbit.com'; // https://api.upbit.com
-
+// URLs of Upbit we are connecting to
+exports.upbit_ws_url = process.env.indonesia ? 'wss://upbit.com/websocket/v1' : 'wss://id-api.upbit.com/websocket/v1';
+exports.upbit_api_url = process.env.indonesia ? 'https://id-api.upbit.com' : 'https://api.upbit.com'; 
 
 
 // source exchange authentication
@@ -23,9 +21,6 @@ exports.MARKUP = (typeof process.env.MARKUP !== 'undefined') ? parseFloat(proces
 
 exports.quote_currency = 'BTC';
 exports.dest_pair = 'GBYTE/' + exports.quote_currency;
-
-
-exports.dest_ws_pair = 'gbyte_btc';
 
 exports.dest_ws_market = {
   id: "BTC-GBYTE", // remote_id used by the exchange

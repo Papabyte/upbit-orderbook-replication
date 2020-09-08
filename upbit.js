@@ -266,15 +266,9 @@ async function getFilledAmountByPrices(prices) {
 	return await getFilledAmount(order_ids);
 }
 
-function delay(ms){
-	return new Promise(function(resolve){
-		setTimeout(resolve, ms);
-	});
-}
 
 async function getFilledAmount(order_ids) {
 	let amount = 0;
-	await delay(100);
 	for (let order_id of order_ids) {
 		let dest_order = await getOrderInfo(order_id);
 		console.log('--- affected order', dest_order);
